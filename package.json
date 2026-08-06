@@ -12,6 +12,7 @@
     "token:test-user": "tsx scripts/get-firebase-id-token.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "deploy": "wrangler deploy",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
