@@ -1,0 +1,93 @@
+openapi: 3.1.0
+info:
+  title: Remindly Backend API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+  /v1/items/ingest:
+    post:
+      summary: Ingest media upload or text-only payload into item
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [itemId, contentType]
+              properties:
+                itemId:
+                  type: string
+                contentType:
+                  type: string
+                  enum: [IMAGE, DOCUMENT, TEXT, AUDIO, VIDEO, OTHER]
+                media:
+                  type: string
+                  format: binary
+                extractedText:
+                  type: string
+                mimeType:
+                  type: string
+                capturedAt:
+                  type: string
+                  format: date-time
+                metadata:
+                  type: string
+                  description: JSON string, e.g. {"source":"mobile","timezone":"Africa/Nairobi"}
+          application/json:
+            schema:
+              type: object
+              required: [itemId, contentType]
+              properties:
+                itemId:
+                  type: string
+                contentType:
+                  type: string
+                  enum: [IMAGE, DOCUMENT, TEXT, AUDIO, VIDEO, OTHER]
+                extractedText:
+                  type: string
+                mimeType:
+                  type: string
+                capturedAt:
+                  type: string
+                  format: date-time
+                metadata:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Saved item
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [item, extraction]
+                properties:
+                  item:
+                    type: object
+                    additionalProperties: true
+                  extraction:
+                    type: object
+                    required: [strategy, confidence, ocrQualityScore]
+                    properties:
+                      strategy:
+                        type: string
+                        enum: [OCR_PLUS_SUMMARY, VISION_FULL_EXTRACTION, TEXT_FULL_EXTRACTION]
+                      confidence:
+                        type: number
+                      ocrQualityScore:
+                        type: number
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

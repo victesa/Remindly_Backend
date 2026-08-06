@@ -1,0 +1,71 @@
+{
+  "info": {
+    "name": "Remindly Backend",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Ingest Item (Text Only)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{firebaseIdToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/items/ingest",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "items", "ingest"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"itemId\": \"local-generated-uuid\",\n  \"contentType\": \"TEXT\",\n  \"extractedText\": \"Google Internship Applications are now open. Deadline: 31 August...\",\n  \"capturedAt\": \"2026-07-28T10:30:00Z\",\n  \"metadata\": {\n    \"source\": \"mobile\",\n    \"locale\": \"en-US\",\n    \"timezone\": \"Africa/Nairobi\"\n  }\n}"
+        }
+      }
+    },
+    {
+      "name": "Ingest Item (Multipart Media)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{firebaseIdToken}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/v1/items/ingest",
+          "host": ["{{baseUrl}}"],
+          "path": ["v1", "items", "ingest"]
+        },
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "itemId", "value": "local-generated-uuid", "type": "text" },
+            { "key": "contentType", "value": "IMAGE", "type": "text" },
+            { "key": "media", "type": "file", "src": [] },
+            { "key": "extractedText", "value": "Optional OCR text", "type": "text" },
+            { "key": "capturedAt", "value": "2026-07-28T10:30:00Z", "type": "text" },
+            {
+              "key": "metadata",
+              "value": "{\"source\":\"mobile\",\"locale\":\"en-US\",\"timezone\":\"Africa/Nairobi\"}",
+              "type": "text"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "firebaseIdToken", "value": "" }
+  ]
+}
