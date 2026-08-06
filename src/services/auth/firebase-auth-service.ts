@@ -1,6 +1,5 @@
 import { cert, getApp, getApps, initializeApp, type App, type ServiceAccount } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import type { AppConfig } from "../../config/env.js";
 import type { AuthService, AuthUser } from "../../ports/auth-service.js";
 
@@ -30,10 +29,6 @@ function getFirebaseApp(config: AppConfig): App {
   });
 
   return firebaseApp;
-}
-
-export function getFirestore(config: AppConfig): FirebaseFirestore.Firestore {
-  return getAdminFirestore(getFirebaseApp(config));
 }
 
 export class FirebaseAuthService implements AuthService {

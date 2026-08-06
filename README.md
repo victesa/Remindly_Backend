@@ -25,7 +25,8 @@ Remindly Backend is a Fastify + TypeScript API that ingests uploaded media or te
 - Node.js
 - TypeScript
 - Fastify
-- Firebase Admin SDK (Auth + Firestore)
+- Firebase Admin SDK (Auth)
+- Firestore REST API (item storage)
 - Gemini via Google Generative Language REST API
 - Zod validation
 - Vitest tests
