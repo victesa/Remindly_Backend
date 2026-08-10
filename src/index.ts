@@ -6,9 +6,9 @@ import { loadConfig } from "./config/env.js";
 
 let appPromise: Promise<FastifyInstance> | null = null;
 
-function getApp(): Promise<FastifyInstance> {
+function getApp(runtimeEnv?: Record<string, unknown>): Promise<FastifyInstance> {
   if (!appPromise) {
-    const config = loadConfig();
+    const config = loadConfig(runtimeEnv);
     appPromise = buildApp(config);
   }
 
@@ -70,8 +70,8 @@ function toInjectMethod(method: string): NonNullable<InjectOptions["method"]> {
 }
 
 export default {
-  async fetch(request: Request): Promise<Response> {
-    const app = await getApp();
+  async fetch(request: Request, env: Record<string, unknown>): Promise<Response> {
+    const app = await getApp(env);
     const url = new URL(request.url);
     const injectOptions: InjectOptions = {
       method: toInjectMethod(request.method),

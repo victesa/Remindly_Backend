@@ -44,8 +44,15 @@ const envSchema = z.object({
 
 export type AppConfig = z.infer<typeof envSchema>;
 
-export function loadConfig(): AppConfig {
-  const parsed = envSchema.safeParse(process.env);
+type EnvSource = Record<string, unknown>;
+
+export function loadConfig(runtimeEnv?: EnvSource): AppConfig {
+  const mergedEnv = {
+    ...process.env,
+    ...(runtimeEnv ?? {})
+  };
+
+  const parsed = envSchema.safeParse(mergedEnv);
   if (!parsed.success) {
     const errors = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
     throw new Error(`Invalid environment configuration: ${errors}`);
