@@ -85,12 +85,14 @@ export async function buildApp(config: AppConfig, depsOverride?: Partial<AppDeps
   if (!isCloudflareWorkersRuntime) {
     await app.register(openApiPlugin);
   }
-  await app.register(multipart, {
-    limits: {
-      fileSize: 15 * 1024 * 1024,
-      files: 1
-    }
-  });
+  if (!isCloudflareWorkersRuntime) {
+    await app.register(multipart, {
+      limits: {
+        fileSize: 15 * 1024 * 1024,
+        files: 1
+      }
+    });
+  }
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) {

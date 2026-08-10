@@ -32,10 +32,19 @@ type MultipartCapableRequest = FastifyRequest & {
   parts: () => AsyncIterable<MultipartFile | { type: "field"; fieldname: string; value: string }>;
 };
 
+function isMultipartRequest(request: FastifyRequest): boolean {
+  const maybeMultipart = request as Partial<MultipartCapableRequest>;
+  if (typeof maybeMultipart.isMultipart !== "function") {
+    return false;
+  }
+
+  return maybeMultipart.isMultipart();
+}
+
 async function normalizeRequestBody(request: FastifyRequest) {
   const multipartRequest = request as MultipartCapableRequest;
 
-  if (!multipartRequest.isMultipart()) {
+  if (!isMultipartRequest(request)) {
     return ingestRequestSchema.parse(request.body);
   }
 
@@ -161,20 +170,21 @@ export async function registerIngestRoute(app: FastifyInstance, deps: { authServ
     async (request, reply) => {
       const multipartRequest = request as MultipartCapableRequest;
       const startedAt = Date.now();
+      const requestIsMultipart = isMultipartRequest(request);
 
       request.log.info(
         {
-          isMultipart: multipartRequest.isMultipart(),
+          isMultipart: requestIsMultipart,
           contentType: request.headers["content-type"]
         },
         "ingest.request.start"
       );
 
-      if (request.validationError && !multipartRequest.isMultipart()) {
+      if (request.validationError && !requestIsMultipart) {
         throw request.validationError;
       }
 
-      if (request.validationError && multipartRequest.isMultipart()) {
+      if (request.validationError && requestIsMultipart) {
         request.log.debug(
           {
             validationError: request.validationError.message
