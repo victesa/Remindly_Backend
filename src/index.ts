@@ -1,93 +1,218 @@
 import { Buffer } from "node:buffer";
-import type { OutgoingHttpHeaders } from "node:http";
-import type { FastifyInstance, InjectOptions } from "fastify";
-import { buildApp } from "./app.js";
+import { ZodError } from "zod";
 import { loadConfig } from "./config/env.js";
+import { ingestRequestSchema, ingestResponseSchema } from "./contracts/ingest.js";
+import type { IngestRequest } from "./contracts/ingest.js";
+import { FirestoreItemRepository } from "./repositories/firestore-item-repository.js";
+import { FirebaseAuthService } from "./services/auth/firebase-auth-service.js";
+import { TextExtractor } from "./services/extraction/text-extractor.js";
+import { GeminiHttpClient } from "./services/gemini/gemini-http-client.js";
+import { OpenRouterClient } from "./services/gemini/openrouter-client.js";
+import { CloudflareR2MediaStorage } from "./services/media/cloudflare-r2-media-storage.js";
+import { HeuristicOcrClient } from "./services/ocr/heuristic-ocr-client.js";
+import { IngestPipeline } from "./services/pipeline/ingest-pipeline.js";
 
-let appPromise: Promise<FastifyInstance> | null = null;
+type WorkerContainer = {
+  authService: FirebaseAuthService;
+  pipeline: IngestPipeline;
+};
 
-function getApp(runtimeEnv?: Record<string, unknown>): Promise<FastifyInstance> {
-  if (!appPromise) {
+let containerPromise: Promise<WorkerContainer> | null = null;
+
+function buildContainer(runtimeEnv?: Record<string, unknown>): Promise<WorkerContainer> {
+  if (!containerPromise) {
     const config = loadConfig(runtimeEnv);
-    appPromise = buildApp(config);
+    const geminiAi = config.LLM_PROVIDER === "openrouter" ? new OpenRouterClient(config) : new GeminiHttpClient(config);
+    const itemRepository = new FirestoreItemRepository(config);
+    const mediaStorage = new CloudflareR2MediaStorage(config);
+    const ocrClient = new HeuristicOcrClient(geminiAi);
+    const textExtractor = new TextExtractor();
+    const pipeline = new IngestPipeline(config, geminiAi, itemRepository, mediaStorage, ocrClient, textExtractor);
+    const authService = new FirebaseAuthService(config);
+
+    containerPromise = Promise.resolve({ authService, pipeline });
   }
 
-  return appPromise;
+  return containerPromise;
 }
 
-function toInjectHeaders(headers: Headers): NonNullable<InjectOptions["headers"]> {
-  const mapped: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    mapped[key] = value;
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8"
+    }
   });
-  return mapped;
 }
 
-function toResponseHeaders(headers: OutgoingHttpHeaders): Headers {
-  const responseHeaders = new Headers();
-
-  for (const [name, value] of Object.entries(headers)) {
-    if (typeof value === "undefined") {
-      continue;
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        responseHeaders.append(name, item);
-      }
-      continue;
-    }
-
-    responseHeaders.set(name, String(value));
-  }
-
-  return responseHeaders;
-}
-
-async function toPayload(request: Request): Promise<Buffer | undefined> {
-  if (request.method === "GET" || request.method === "HEAD") {
+function toOptionalString(input: FormDataEntryValue | null): string | undefined {
+  if (typeof input !== "string") {
     return undefined;
   }
 
-  const bodyBuffer = Buffer.from(await request.arrayBuffer());
-  return bodyBuffer.length > 0 ? bodyBuffer : undefined;
+  const trimmed = input.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function toInjectMethod(method: string): NonNullable<InjectOptions["method"]> {
-  const normalized = method.toUpperCase();
-  switch (normalized) {
-    case "DELETE":
-    case "GET":
-    case "HEAD":
-    case "OPTIONS":
-    case "PATCH":
-    case "POST":
-    case "PUT":
-      return normalized;
-    default:
-      return "GET";
+function parseMetadataField(input: FormDataEntryValue | null): Record<string, unknown> | undefined {
+  if (typeof input !== "string") {
+    return undefined;
   }
+
+  try {
+    const parsed = JSON.parse(input) as Record<string, unknown>;
+    return typeof parsed === "object" && parsed !== null ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function parseIngestRequest(request: Request): Promise<IngestRequest> {
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+
+  try {
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const mediaField = formData.get("media");
+
+      let media: IngestRequest["media"];
+      if (mediaField instanceof File) {
+        const buffer = Buffer.from(await mediaField.arrayBuffer());
+        media = {
+          buffer,
+          mimeType: mediaField.type || "application/octet-stream",
+          ...(mediaField.name ? { fileName: mediaField.name } : {}),
+          size: buffer.length
+        };
+      }
+
+      return ingestRequestSchema.parse({
+        itemId: toOptionalString(formData.get("itemId")),
+        contentType: toOptionalString(formData.get("contentType")),
+        extractedText: toOptionalString(formData.get("extractedText")),
+        mimeType: toOptionalString(formData.get("mimeType")),
+        capturedAt: toOptionalString(formData.get("capturedAt")),
+        metadata: parseMetadataField(formData.get("metadata")),
+        ...(media ? { media } : {})
+      });
+    }
+
+    const parsedJson = (await request.json()) as unknown;
+    return ingestRequestSchema.parse(parsedJson);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      throw error;
+    }
+
+    throw Object.assign(new Error("Invalid request body"), { statusCode: 400 });
+  }
+}
+
+async function authenticateUser(authorization: string | null, authService: FirebaseAuthService): Promise<string> {
+  if (!authorization || !authorization.startsWith("Bearer ")) {
+    throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+  }
+
+  const token = authorization.slice("Bearer ".length).trim();
+  if (!token) {
+    throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+  }
+
+  try {
+    const user = await authService.verifyBearerToken(token);
+    return user.uid;
+  } catch (error) {
+    const code = typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "unknown";
+    if (code === "auth/id-token-expired") {
+      throw Object.assign(new Error("Firebase ID token expired. Refresh token on client and retry."), {
+        statusCode: 401,
+        code: "TOKEN_EXPIRED"
+      });
+    }
+
+    if (code === "auth/timeout") {
+      throw Object.assign(new Error("Authentication provider timeout"), { statusCode: 503 });
+    }
+
+    if (code === "auth/configuration-error") {
+      throw Object.assign(new Error("Authentication provider configuration error"), { statusCode: 500 });
+    }
+
+    throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+  }
+}
+
+function errorResponse(error: unknown): Response {
+  if (error instanceof ZodError) {
+    return jsonResponse(400, {
+      error: "Bad Request",
+      details: error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message
+      }))
+    });
+  }
+
+  const statusCode =
+    typeof (error as { statusCode?: unknown }).statusCode === "number" && (error as { statusCode: number }).statusCode >= 400
+      ? (error as { statusCode: number }).statusCode
+      : 500;
+
+  const message = error instanceof Error ? error.message : "Unknown error";
+
+  if (statusCode === 401 && typeof (error as { code?: unknown }).code === "string") {
+    return jsonResponse(401, {
+      error: "Unauthorized",
+      code: (error as { code: string }).code,
+      message
+    });
+  }
+
+  if (statusCode === 401) {
+    return jsonResponse(401, { error: "Unauthorized" });
+  }
+
+  if (statusCode === 503) {
+    return jsonResponse(503, { error: "Service Unavailable", message });
+  }
+
+  if (statusCode >= 400 && statusCode < 500) {
+    return jsonResponse(statusCode, { error: "Request Failed", message });
+  }
+
+  return jsonResponse(500, { error: "Internal Server Error", message });
+}
+
+async function handleRequest(request: Request, env: Record<string, unknown>): Promise<Response> {
+  const url = new URL(request.url);
+
+  if (request.method === "GET" && url.pathname === "/favicon.ico") {
+    return new Response(null, { status: 204 });
+  }
+
+  if (request.method === "GET" && url.pathname === "/health") {
+    return jsonResponse(200, { ok: true });
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/items/ingest") {
+    const { authService, pipeline } = await buildContainer(env);
+    const uid = await authenticateUser(request.headers.get("authorization"), authService);
+    const ingestRequest = await parseIngestRequest(request);
+    const result = await pipeline.run(uid, ingestRequest);
+    const responseBody = ingestResponseSchema.parse(result);
+    return jsonResponse(200, responseBody);
+  }
+
+  return jsonResponse(404, { error: "Not Found" });
 }
 
 export default {
   async fetch(request: Request, env: Record<string, unknown>): Promise<Response> {
-    const app = await getApp(env);
-    const url = new URL(request.url);
-    const injectOptions: InjectOptions = {
-      method: toInjectMethod(request.method),
-      url: `${url.pathname}${url.search}`,
-      headers: toInjectHeaders(request.headers)
-    };
-    const payload = await toPayload(request);
-    if (payload) {
-      injectOptions.payload = payload;
+    try {
+      return await handleRequest(request, env);
+    } catch (error) {
+      console.error("worker.request.error", error);
+      return errorResponse(error);
     }
-
-    const injectResponse = await app.inject(injectOptions);
-
-    return new Response(injectResponse.payload, {
-      status: injectResponse.statusCode,
-      headers: toResponseHeaders(injectResponse.headers)
-    });
   }
 };

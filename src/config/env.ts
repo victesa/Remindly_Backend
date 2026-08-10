@@ -1,7 +1,10 @@
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config({ override: true });
+const isCloudflareWorkersRuntime = typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair !== "undefined";
+if (!isCloudflareWorkersRuntime) {
+  dotenv.config({ override: true });
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -19,6 +22,7 @@ const envSchema = z.object({
   DEFAULT_TIMEZONE: z.string().default("UTC"),
   FIREBASE_PROJECT_ID: z.string().min(1),
   FIREBASE_SERVICE_ACCOUNT_JSON: z.string().min(1),
+  FIREBASE_WEB_API_KEY: z.string().min(1).optional(),
   CLOUDFLARE_R2_ENDPOINT: z.string().url().optional(),
   CLOUDFLARE_R2_ACCESS_KEY_ID: z.string().min(1).optional(),
   CLOUDFLARE_R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),

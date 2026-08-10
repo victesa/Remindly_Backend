@@ -1,45 +1,73 @@
-import { cert, getApp, getApps, initializeApp, type App, type ServiceAccount } from "firebase-admin/app";
-import { getAuth, type Auth } from "firebase-admin/auth";
 import type { AppConfig } from "../../config/env.js";
 import type { AuthService, AuthUser } from "../../ports/auth-service.js";
 
-let firebaseApp: App | null = null;
+type FirebaseLookupResponse = {
+  users?: Array<{ localId?: string }>;
+  error?: { message?: string };
+};
 
-function parseServiceAccount(raw: string): ServiceAccount {
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
-
-  const privateKeyRaw = parsed.private_key;
-  if (typeof privateKeyRaw === "string") {
-    parsed.private_key = privateKeyRaw.replace(/\\n/g, "\n");
-  }
-
-  return parsed as ServiceAccount;
-}
-
-function getFirebaseApp(config: AppConfig): App {
-  if (firebaseApp) {
-    return firebaseApp;
-  }
-
-  const serviceAccount = parseServiceAccount(config.FIREBASE_SERVICE_ACCOUNT_JSON);
-
-  firebaseApp = getApps().length > 0 ? getApp() : initializeApp({
-    credential: cert(serviceAccount),
-    projectId: config.FIREBASE_PROJECT_ID
-  });
-
-  return firebaseApp;
-}
+type AuthError = Error & { code?: string };
 
 export class FirebaseAuthService implements AuthService {
-  private readonly auth: Auth;
+  private readonly apiKey: string | undefined;
+  private readonly timeoutMs = 12_000;
 
   constructor(config: AppConfig) {
-    this.auth = getAuth(getFirebaseApp(config));
+    this.apiKey = config.FIREBASE_WEB_API_KEY;
+  }
+
+  private createAuthError(message: string, code: string): AuthError {
+    const error = new Error(message) as AuthError;
+    error.code = code;
+    return error;
   }
 
   async verifyBearerToken(token: string): Promise<AuthUser> {
-    const decoded = await this.auth.verifyIdToken(token);
-    return { uid: decoded.uid };
+    if (!this.apiKey) {
+      throw this.createAuthError("FIREBASE_WEB_API_KEY is required to verify Firebase ID tokens in Workers runtime", "auth/configuration-error");
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const response = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(this.apiKey)}`,
+        {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ idToken: token })
+        }
+      );
+
+      const payload = (await response.json()) as FirebaseLookupResponse;
+      const message = payload.error?.message;
+
+      if (!response.ok) {
+        if (message === "TOKEN_EXPIRED") {
+          throw this.createAuthError("Firebase ID token expired", "auth/id-token-expired");
+        }
+
+        throw this.createAuthError(`Firebase token verification failed (${response.status}): ${message ?? "unknown"}`, "auth/invalid-token");
+      }
+
+      const uid = payload.users?.[0]?.localId;
+      if (!uid) {
+        throw this.createAuthError("Firebase token verification did not return a user id", "auth/invalid-token");
+      }
+
+      return { uid };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw this.createAuthError("Firebase token verification timed out", "auth/timeout");
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
