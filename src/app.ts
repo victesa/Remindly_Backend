@@ -59,8 +59,11 @@ function buildDeps(config: AppConfig, depsOverride?: Partial<AppDeps>): AppDeps 
 }
 
 export async function buildApp(config: AppConfig, depsOverride?: Partial<AppDeps>): Promise<FastifyInstance> {
+  const isCloudflareWorkersRuntime =
+    typeof (globalThis as { WebSocketPair?: unknown }).WebSocketPair !== "undefined";
+
   const app = Fastify({
-    logger: true
+    logger: isCloudflareWorkersRuntime ? false : true
   });
 
   const deps = buildDeps(config, depsOverride);
