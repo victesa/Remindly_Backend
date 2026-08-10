@@ -82,7 +82,9 @@ export async function buildApp(config: AppConfig, depsOverride?: Partial<AppDeps
     request.log.warn("http.request.aborted");
   });
 
-  await app.register(openApiPlugin);
+  if (!isCloudflareWorkersRuntime) {
+    await app.register(openApiPlugin);
+  }
   await app.register(multipart, {
     limits: {
       fileSize: 15 * 1024 * 1024,
