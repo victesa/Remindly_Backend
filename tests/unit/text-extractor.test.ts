@@ -35,4 +35,18 @@ describe("TextExtractor", () => {
     expect(result.extracted.metadata.website).toBe("https://careers.google.com");
     expect(result.extracted.metadata.contactEmail).toBe("internships@google.com");
   });
+
+  it("classifies hospital hiring adverts as JOB instead of HEALTH", () => {
+    const extractor = new TextExtractor();
+    const text = [
+      "St. Mary Hospital Hiring Notice",
+      "Applications are open for Nursing Officer positions",
+      "Minimum qualifications and CV required",
+      "Apply before 2026-09-10"
+    ].join("\n");
+
+    const result = extractor.extract(text);
+
+    expect(result.extracted.category).toBe("JOB");
+  });
 });

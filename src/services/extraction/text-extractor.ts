@@ -19,6 +19,32 @@ const categoryHints: Record<string, string[]> = {
   PERSONAL: ["personal", "note", "reminder"]
 };
 
+const employmentSignals = [
+  /\bjob(s)?\b/i,
+  /\bvacanc(y|ies)\b/i,
+  /\bposition(s)?\b/i,
+  /\bhiring\b/i,
+  /\brecruit(ment|ing)?\b/i,
+  /\bintern(ship)?\b/i,
+  /\bcareer(s)?\b/i,
+  /\brole(s)?\b/i,
+  /\bapply\b/i,
+  /\bapplication(s)?\b/i,
+  /\bcv\b/i,
+  /\bresume\b/i,
+  /\bqualification(s)?\b/i,
+  /\bexperience\b/i
+];
+
+const appointmentSignals = [
+  /\bappointment(s)?\b/i,
+  /\bclinic\b/i,
+  /\bpatient\b/i,
+  /\bdoctor\s+appointment\b/i,
+  /\bcheck[-\s]?up\b/i,
+  /\bprescription\b/i
+];
+
 function firstNonEmptyLine(text: string): string {
   const line = text
     .split(/\r?\n/)
@@ -63,6 +89,14 @@ function deriveTitle(text: string): string {
 
 function detectCategory(text: string): ExtractedItem["category"] {
   const lower = text.toLowerCase();
+
+  const employmentScore = employmentSignals.reduce((acc, pattern) => (pattern.test(lower) ? acc + 1 : acc), 0);
+  const appointmentScore = appointmentSignals.reduce((acc, pattern) => (pattern.test(lower) ? acc + 1 : acc), 0);
+
+  // Hospital/doctor terms can appear in job adverts. Prioritize employment intent when strong.
+  if (employmentScore >= 2 && employmentScore >= appointmentScore + 1) {
+    return "JOB";
+  }
 
   let winner: ExtractedItem["category"] = "OTHER";
   let winnerScore = 0;

@@ -32,6 +32,15 @@ const SCHOLARSHIP_TERMS = [
   /\bpostgraduate\b/i
 ];
 
+const APPOINTMENT_TERMS = [
+  /\bappointment(s)?\b/i,
+  /\bclinic\b/i,
+  /\bpatient\b/i,
+  /\bcheck[-\s]?up\b/i,
+  /\bprescription\b/i,
+  /\bbook(ed|ing)?\b/i
+];
+
 function flattenMetadataValues(metadata: Record<string, unknown>): string[] {
   const values: string[] = [];
 
@@ -101,6 +110,7 @@ export function calibrateJobScholarshipCategory(extracted: ExtractedItem, source
   const lower = signalText.toLowerCase();
   let jobScore = scoreMatches(lower, JOB_TERMS);
   let scholarshipScore = scoreMatches(lower, SCHOLARSHIP_TERMS);
+  const appointmentScore = scoreMatches(lower, APPOINTMENT_TERMS);
 
   if (/\b(apply|application|applications)\b/.test(lower) && /\b(job|position|role|intern(ship)?)\b/.test(lower)) {
     jobScore += 2;
@@ -108,6 +118,26 @@ export function calibrateJobScholarshipCategory(extracted: ExtractedItem, source
 
   if (/\b(university|college|campus|degree)\b/.test(lower) && /\b(scholarship|bursary|grant|fellowship)\b/.test(lower)) {
     scholarshipScore += 2;
+  }
+
+  if (/\b(hospital|clinic|doctor|medical|nurse)\b/.test(lower) && /\b(hiring|vacanc(y|ies)|position|role|apply|application)\b/.test(lower)) {
+    jobScore += 2;
+  }
+
+  const canPromoteToJob =
+    jobScore >= 3 &&
+    jobScore >= scholarshipScore + 2 &&
+    jobScore >= appointmentScore + 1;
+
+  if (canPromoteToJob && extracted.category !== "JOB") {
+    return {
+      extracted: {
+        ...extracted,
+        category: "JOB"
+      },
+      changed: true,
+      reason: `Adjusted category from ${extracted.category} to JOB based on employment signals (JOB=${jobScore}, SCHOLARSHIP=${scholarshipScore}, APPOINTMENT=${appointmentScore})`
+    };
   }
 
   const winner = jobScore > scholarshipScore ? "JOB" : scholarshipScore > jobScore ? "SCHOLARSHIP" : extracted.category;
