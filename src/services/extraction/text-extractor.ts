@@ -93,7 +93,7 @@ function detectCategory(text: string): ExtractedItem["category"] {
   const employmentScore = employmentSignals.reduce((acc, pattern) => (pattern.test(lower) ? acc + 1 : acc), 0);
   const appointmentScore = appointmentSignals.reduce((acc, pattern) => (pattern.test(lower) ? acc + 1 : acc), 0);
 
-  // Hospital/doctor terms can appear in job adverts. Prioritize employment intent when strong.
+  // Domain keywords can be noisy. Prioritize strong employment intent when present.
   if (employmentScore >= 2 && employmentScore >= appointmentScore + 1) {
     return "JOB";
   }

@@ -285,7 +285,7 @@ export class IngestPipeline {
 
     let ocrText = request.extractedText?.trim() ?? "";
     let sourceContentFetched = false;
-    let extractionStrategy: PipelineResult["extraction"]["strategy"] = "OCR_PLUS_SUMMARY";
+    let extractionStrategy: PipelineResult["extraction"]["strategy"] = "TEXT_FULL_EXTRACTION";
     let extractionConfidence = 0;
     let ocrQualityScore = 0;
     let extractionModel = this.config.GEMINI_BASIC_MODEL;
@@ -340,25 +340,24 @@ export class IngestPipeline {
     let saved: Item;
 
     if (!sourceContentFetched && quality.isGoodEnough && quality.canExtractFromText && ocrText.length > 0) {
-      const heuristic = this.textExtractor.extract(ocrText);
-      if (heuristic.completenessScore >= 0.55) {
-        const calibrated = calibrateJobScholarshipCategory(heuristic.extracted, ocrText);
-        if (calibrated.changed) {
-          extractionModel = `${extractionModel}+category-calibration`;
-          usedAdvancedModel = false;
-        }
-
-        const summaryResult = await this.withStageTimeout(
-          "geminiAi.summarizeFromText",
-          this.geminiAi.summarizeFromText({
+      try {
+        const textResult = await this.withStageTimeout(
+          "geminiAi.extractFromText",
+          this.geminiAi.extractFromText({
             text: ocrText,
-            title: calibrated.extracted.title,
-            timezone: effectiveTimezone
+            timezone: effectiveTimezone,
+            preferBasicModel: true
           })
         );
+        const calibrated = calibrateJobScholarshipCategory(textResult.extracted, ocrText);
+        if (calibrated.changed) {
+          extractionModel = `${textResult.model}+category-calibration`;
+        }
 
-        extractionStrategy = "OCR_PLUS_SUMMARY";
-        extractionConfidence = heuristic.confidence;
+        extractionStrategy = "TEXT_FULL_EXTRACTION";
+        extractionConfidence = textResult.confidence;
+        extractionModel = calibrated.changed ? extractionModel : textResult.model;
+        usedAdvancedModel = textResult.usedAdvancedModel;
 
         saved = await this.withStageTimeout(
           "itemRepository.save",
@@ -366,7 +365,7 @@ export class IngestPipeline {
           uid,
           itemId: request.itemId,
           title: calibrated.extracted.title,
-          summary: summaryResult.summary,
+          summary: calibrated.extracted.summary,
           category: calibrated.extracted.category,
           deadline: this.normalizeDateOnly(calibrated.extracted.deadline),
           eventDate: this.normalizeDateOnly(calibrated.extracted.eventDate),
@@ -399,6 +398,10 @@ export class IngestPipeline {
         );
 
         return { item: saved, extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore } };
+      } catch (error) {
+        if (!imageUrl) {
+          throw error;
+        }
       }
     }
 

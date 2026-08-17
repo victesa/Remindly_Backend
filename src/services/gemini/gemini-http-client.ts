@@ -203,7 +203,9 @@ export class GeminiHttpClient implements GeminiAi {
 
   async summarizeFromText(input: { text: string; title?: string; timezone: string }): Promise<{ summary: string; state?: ItemState }> {
     const prompt = [
-      "Summarize this item in at most 2 concise sentences.",
+      "Answer this first: what is this item about? Then summarize in at most 2 concise sentences.",
+      "Summary must capture the primary intent (for example hiring notice, scholarship call, event, bill, appointment).",
+      "Do not produce contact-only summaries. Mention contact details only after stating the purpose.",
       "Infer state only if explicit processing or failure context exists.",
       "Return only JSON with keys: summary (string), state (READY|PROCESSING|FAILED).",
       "If state is unclear, use READY.",
@@ -264,10 +266,14 @@ export class GeminiHttpClient implements GeminiAi {
   }> {
     const prompt = [
       "Extract reminder item details from the provided text.",
+      "First determine the primary intent by answering: what is this item about?",
+      "Classify by intent, not by organization domain. Example: a hospital recruitment advert is JOB, not HEALTH.",
       "Return only valid JSON with keys: title, summary, category, deadline, eventDate, state, metadata, confidence.",
+      "Summary must begin with the core purpose and action, not contact details.",
+      "For JOB summaries include role and organization if available.",
       "Categories must be one of: JOB, EVENT, SCHOLARSHIP, MEETING, EXAM, ASSIGNMENT, BILL, PAYMENT, APPOINTMENT, SUBSCRIPTION, TRAVEL, HEALTH, SHOPPING, DOCUMENT, PERSONAL, OTHER.",
       "Category rule: use JOB for vacancies, internships, hiring notices, employment roles, or applications for a role.",
-      "Category rule: if a hospital/clinic/medical organization is recruiting staff, classify as JOB (not HEALTH or APPOINTMENT).",
+      "Category rule: classify by primary intent and required action, not by organization domain labels.",
       "Category rule: use SCHOLARSHIP only for study funding such as tuition support, bursary, grant, or fellowship.",
       "If job-role signals and scholarship signals both appear, choose JOB unless funding-for-study is the primary intent.",
       "Use YYYY-MM-DD format for deadline/eventDate, or null when unknown. Do not invent fields.",
@@ -320,10 +326,14 @@ export class GeminiHttpClient implements GeminiAi {
   }): Promise<VisionExtractionResult> {
     const basePrompt = [
       "Extract reminder item details from this image.",
+      "First determine the primary intent by answering: what is this image/file about?",
+      "Classify by intent, not by organization domain. Example: a hospital recruitment advert is JOB, not HEALTH.",
       "Return only valid JSON with keys: title, summary, category, deadline, eventDate, state, metadata, confidence.",
+      "Summary must begin with the core purpose and action, not contact details.",
+      "For JOB summaries include role and organization if available.",
       "Categories must be one of: JOB, EVENT, SCHOLARSHIP, MEETING, EXAM, ASSIGNMENT, BILL, PAYMENT, APPOINTMENT, SUBSCRIPTION, TRAVEL, HEALTH, SHOPPING, DOCUMENT, PERSONAL, OTHER.",
       "Category rule: use JOB for vacancies, internships, hiring notices, employment roles, or applications for a role.",
-      "Category rule: if a hospital/clinic/medical organization is recruiting staff, classify as JOB (not HEALTH or APPOINTMENT).",
+      "Category rule: classify by primary intent and required action, not by organization domain labels.",
       "Category rule: use SCHOLARSHIP only for study funding such as tuition support, bursary, grant, or fellowship.",
       "If job-role signals and scholarship signals both appear, choose JOB unless funding-for-study is the primary intent.",
       "Use YYYY-MM-DD format for deadline/eventDate, or null when unknown. Do not invent fields.",

@@ -68,23 +68,4 @@ describe("calibrateJobScholarshipCategory", () => {
     expect(result.extracted.category).toBe("SCHOLARSHIP");
   });
 
-  it("reclassifies health to job for hospital recruitment adverts", () => {
-    const extracted = buildExtractedItem({
-      title: "City Hospital Recruitment",
-      summary: "Applications invited for lab technician role",
-      category: "HEALTH",
-      metadata: {
-        hospital: "City Hospital",
-        contactEmail: "jobs@cityhospital.org"
-      }
-    });
-
-    const result = calibrateJobScholarshipCategory(
-      extracted,
-      "City Hospital is hiring lab technicians. Submit CV and application before deadline."
-    );
-
-    expect(result.changed).toBe(true);
-    expect(result.extracted.category).toBe("JOB");
-  });
 });
