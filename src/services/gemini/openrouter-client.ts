@@ -312,7 +312,7 @@ export class OpenRouterClient implements GeminiAi {
 
     const completed = await this.completeWithRetries({
       primaryModel,
-      fallbackModel,
+      ...(fallbackModel ? { fallbackModel } : {}),
       prompt
     });
 
@@ -360,7 +360,7 @@ export class OpenRouterClient implements GeminiAi {
 
     const completed = await this.completeWithRetries({
       primaryModel,
-      fallbackModel,
+      ...(fallbackModel ? { fallbackModel } : {}),
       prompt,
       imageUrl: input.imageUrl
     });
