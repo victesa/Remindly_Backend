@@ -173,7 +173,8 @@ export class OpenRouterClient implements GeminiAi {
       return { text, model: options.primaryModel };
     } catch (error) {
       const asHttpError = error as HttpError;
-      if (!options.fallbackModel || options.fallbackModel === options.primaryModel || asHttpError.retryable !== true) {
+      const fallbackDisabled = this.config.LLM_DISABLE_ADVANCED_FALLBACK;
+      if (fallbackDisabled || !options.fallbackModel || options.fallbackModel === options.primaryModel || asHttpError.retryable !== true) {
         throw error;
       }
 
@@ -307,7 +308,7 @@ export class OpenRouterClient implements GeminiAi {
     ].join("\n\n");
 
     const primaryModel = input.preferBasicModel ? this.getBasicModel() : this.getAdvancedModel();
-    const fallbackModel = this.getAdvancedModel();
+    const fallbackModel = this.config.LLM_DISABLE_ADVANCED_FALLBACK ? undefined : this.getAdvancedModel();
 
     const completed = await this.completeWithRetries({
       primaryModel,
@@ -355,7 +356,7 @@ export class OpenRouterClient implements GeminiAi {
       .join("\n\n");
 
     const primaryModel = input.preferBasicModel ? this.getBasicModel() : this.getAdvancedModel();
-    const fallbackModel = this.getAdvancedModel();
+    const fallbackModel = this.config.LLM_DISABLE_ADVANCED_FALLBACK ? undefined : this.getAdvancedModel();
 
     const completed = await this.completeWithRetries({
       primaryModel,

@@ -6,8 +6,7 @@ import type { IngestRequest } from "./contracts/ingest.js";
 import { FirestoreItemRepository } from "./repositories/firestore-item-repository.js";
 import { FirebaseAuthService } from "./services/auth/firebase-auth-service.js";
 import { TextExtractor } from "./services/extraction/text-extractor.js";
-import { GeminiHttpClient } from "./services/gemini/gemini-http-client.js";
-import { OpenRouterClient } from "./services/gemini/openrouter-client.js";
+import { buildGeminiAi } from "./services/gemini/build-gemini-ai.js";
 import { CloudflareR2MediaStorage } from "./services/media/cloudflare-r2-media-storage.js";
 import { HeuristicOcrClient } from "./services/ocr/heuristic-ocr-client.js";
 import { IngestPipeline } from "./services/pipeline/ingest-pipeline.js";
@@ -22,7 +21,7 @@ let containerPromise: Promise<WorkerContainer> | null = null;
 function buildContainer(runtimeEnv?: Record<string, unknown>): Promise<WorkerContainer> {
   if (!containerPromise) {
     const config = loadConfig(runtimeEnv);
-    const geminiAi = config.LLM_PROVIDER === "openrouter" ? new OpenRouterClient(config) : new GeminiHttpClient(config);
+    const geminiAi = buildGeminiAi(config);
     const itemRepository = new FirestoreItemRepository(config);
     const mediaStorage = new CloudflareR2MediaStorage(config);
     const ocrClient = new HeuristicOcrClient(geminiAi);
@@ -174,6 +173,16 @@ function errorResponse(error: unknown): Response {
 
   if (statusCode === 503) {
     return jsonResponse(503, { error: "Service Unavailable", message });
+  }
+
+  if (statusCode === 429) {
+    return new Response(JSON.stringify({ error: "Too Many Requests", message }), {
+      status: 429,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "retry-after": "60"
+      }
+    });
   }
 
   if (statusCode >= 400 && statusCode < 500) {

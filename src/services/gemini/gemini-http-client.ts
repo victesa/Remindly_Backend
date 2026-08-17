@@ -155,7 +155,8 @@ export class GeminiHttpClient implements GeminiAi {
       });
     } catch (primaryError) {
       const asHttpError = primaryError as HttpError;
-      if (!options.fallbackModel || asHttpError.retryable !== true) {
+      const fallbackDisabled = this.config.LLM_DISABLE_ADVANCED_FALLBACK;
+      if (fallbackDisabled || !options.fallbackModel || asHttpError.retryable !== true) {
         throw primaryError;
       }
 
@@ -285,9 +286,10 @@ export class GeminiHttpClient implements GeminiAi {
     ].join("\n\n");
 
     const primaryModel = input.preferBasicModel ? this.config.GEMINI_BASIC_MODEL : this.config.GEMINI_ADVANCED_MODEL;
+    const allowAdvancedFallback = !this.config.LLM_DISABLE_ADVANCED_FALLBACK;
     const primaryRaw = await this.generateText({
       model: primaryModel,
-      fallbackModel: this.config.GEMINI_ADVANCED_MODEL,
+      ...(allowAdvancedFallback ? { fallbackModel: this.config.GEMINI_ADVANCED_MODEL } : {}),
       textPrompt: prompt
     });
     const primaryJson = JSON.parse(stripJsonMarkdown(primaryRaw)) as Record<string, unknown>;
@@ -301,6 +303,10 @@ export class GeminiHttpClient implements GeminiAi {
         usedAdvancedModel: primaryModel === this.config.GEMINI_ADVANCED_MODEL,
         model: primaryModel
       };
+    }
+
+    if (!allowAdvancedFallback || primaryModel === this.config.GEMINI_ADVANCED_MODEL) {
+      throw new Error("Gemini extraction returned invalid JSON payload");
     }
 
     const fallbackRaw = await this.generateText({
@@ -346,9 +352,10 @@ export class GeminiHttpClient implements GeminiAi {
       .join("\n\n");
 
     const primaryModel = input.preferBasicModel ? this.config.GEMINI_BASIC_MODEL : this.config.GEMINI_ADVANCED_MODEL;
+    const allowAdvancedFallback = !this.config.LLM_DISABLE_ADVANCED_FALLBACK;
     const primaryRaw = await this.generateText({
       model: primaryModel,
-      fallbackModel: this.config.GEMINI_ADVANCED_MODEL,
+      ...(allowAdvancedFallback ? { fallbackModel: this.config.GEMINI_ADVANCED_MODEL } : {}),
       textPrompt: basePrompt,
       imageUrl: input.imageUrl
     });
@@ -364,6 +371,10 @@ export class GeminiHttpClient implements GeminiAi {
         usedAdvancedModel: primaryModel === this.config.GEMINI_ADVANCED_MODEL,
         model: primaryModel
       };
+    }
+
+    if (!allowAdvancedFallback || primaryModel === this.config.GEMINI_ADVANCED_MODEL) {
+      throw new Error("Gemini vision extraction returned invalid JSON payload");
     }
 
     const fallbackRaw = await this.generateText({

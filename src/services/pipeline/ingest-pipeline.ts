@@ -20,8 +20,9 @@ export type PipelineResult = {
 
 export class IngestPipeline {
   private readonly stageTimeoutMs = 45_000;
-  private readonly maxInferenceTextLength = 12_000;
   private readonly visionSupportedMimeTypes = new Set(["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]);
+  private static readonly dedupeCache = new Map<string, { expiresAt: number; result: PipelineResult }>();
+  private static readonly dailyRequestUsage = new Map<string, number>();
 
   constructor(
     private readonly config: AppConfig,
@@ -179,17 +180,79 @@ export class IngestPipeline {
   }
 
   private limitTextForInference(input: string): string {
-    if (input.length <= this.maxInferenceTextLength) {
+    const maxInferenceTextLength = this.config.LLM_MAX_INFERENCE_TEXT_LENGTH;
+    if (input.length <= maxInferenceTextLength) {
       return input;
     }
 
-    const clipped = input.slice(0, this.maxInferenceTextLength);
+    const clipped = input.slice(0, maxInferenceTextLength);
     const lastBoundary = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("\n"), clipped.lastIndexOf(" "));
-    if (lastBoundary > this.maxInferenceTextLength * 0.75) {
+    if (lastBoundary > maxInferenceTextLength * 0.75) {
       return clipped.slice(0, lastBoundary).trim();
     }
 
     return clipped.trim();
+  }
+
+  private createTooManyRequestsError(message: string): Error & { statusCode: number } {
+    const error = new Error(message) as Error & { statusCode: number };
+    error.statusCode = 429;
+    return error;
+  }
+
+  private consumeDailyBudgetIfEnabled(): void {
+    const dailyBudget = this.config.LLM_DAILY_REQUEST_BUDGET;
+    if (!dailyBudget) {
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    for (const key of IngestPipeline.dailyRequestUsage.keys()) {
+      if (key !== today) {
+        IngestPipeline.dailyRequestUsage.delete(key);
+      }
+    }
+
+    const used = IngestPipeline.dailyRequestUsage.get(today) ?? 0;
+    if (used >= dailyBudget) {
+      throw this.createTooManyRequestsError("Daily AI request budget exceeded");
+    }
+
+    IngestPipeline.dailyRequestUsage.set(today, used + 1);
+  }
+
+  private getCachedResult(cacheKey: string): PipelineResult | null {
+    const cached = IngestPipeline.dedupeCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+
+    if (cached.expiresAt < Date.now()) {
+      IngestPipeline.dedupeCache.delete(cacheKey);
+      return null;
+    }
+
+    return cached.result;
+  }
+
+  private cacheResult(cacheKey: string, result: PipelineResult): void {
+    const ttlSeconds = this.config.LLM_DEDUPE_TTL_SECONDS;
+    if (ttlSeconds <= 0) {
+      return;
+    }
+
+    if (IngestPipeline.dedupeCache.size > 2000) {
+      for (const [key, value] of IngestPipeline.dedupeCache.entries()) {
+        if (value.expiresAt < Date.now()) {
+          IngestPipeline.dedupeCache.delete(key);
+        }
+      }
+    }
+
+    IngestPipeline.dedupeCache.set(cacheKey, {
+      expiresAt: Date.now() + ttlSeconds * 1000,
+      result
+    });
   }
 
   private async fetchSourceText(url: string): Promise<string> {
@@ -261,6 +324,26 @@ export class IngestPipeline {
   async run(uid: string, request: IngestRequest): Promise<PipelineResult> {
     const effectiveTimezone = this.getEffectiveTimezone(request.metadata?.timezone);
     const idempotencyKey = this.buildIdempotencyKey(uid, request);
+    const cacheKey = `${uid}:${idempotencyKey}`;
+    const cachedResult = this.getCachedResult(cacheKey);
+    if (cachedResult) {
+      return cachedResult;
+    }
+
+    let llmCallCount = 0;
+    const withLlmBudget = async <T>(label: string, operation: Promise<T>): Promise<T> => {
+      if (llmCallCount === 0) {
+        this.consumeDailyBudgetIfEnabled();
+      }
+
+      llmCallCount += 1;
+      if (llmCallCount > this.config.LLM_MAX_LLM_CALLS_PER_REQUEST) {
+        throw this.createTooManyRequestsError("Per-request AI call budget exceeded");
+      }
+
+      return this.withStageTimeout(label, operation);
+    };
+
     const sourceUrl = this.resolveSourceUrl(request);
     const storedMedia = request.media
       ? await this.withStageTimeout(
@@ -315,8 +398,10 @@ export class IngestPipeline {
 
     const canSkipQualityEvaluation = Boolean(imageUrl) && !request.extractedText && !sourceContentFetched;
 
-    const quality = imageUrl && !canSkipQualityEvaluation
-      ? await this.withStageTimeout(
+    const shouldEvaluateQuality = imageUrl && !canSkipQualityEvaluation && !this.config.LLM_LOW_COST_MODE;
+
+    const quality = shouldEvaluateQuality
+      ? await withLlmBudget(
           "geminiAi.evaluateOcrQuality",
           this.geminiAi.evaluateOcrQuality({
             imageUrl,
@@ -341,7 +426,7 @@ export class IngestPipeline {
 
     if (!sourceContentFetched && quality.isGoodEnough && quality.canExtractFromText && ocrText.length > 0) {
       try {
-        const textResult = await this.withStageTimeout(
+        const textResult = await withLlmBudget(
           "geminiAi.extractFromText",
           this.geminiAi.extractFromText({
             text: ocrText,
@@ -397,16 +482,21 @@ export class IngestPipeline {
           })
         );
 
-        return { item: saved, extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore } };
+        const output: PipelineResult = {
+          item: saved,
+          extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore }
+        };
+        this.cacheResult(cacheKey, output);
+        return output;
       } catch (error) {
-        if (!imageUrl) {
+        if (!imageUrl || this.config.LLM_LOW_COST_MODE) {
           throw error;
         }
       }
     }
 
     if (imageUrl) {
-      const visionResult = await this.withStageTimeout(
+      const visionResult = await withLlmBudget(
         "geminiAi.extractFromVision",
         this.geminiAi.extractFromVision({
           imageUrl,
@@ -463,7 +553,12 @@ export class IngestPipeline {
         })
       );
 
-      return { item: saved, extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore } };
+      const output: PipelineResult = {
+        item: saved,
+        extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore }
+      };
+      this.cacheResult(cacheKey, output);
+      return output;
     }
 
     if (!ocrText) {
@@ -476,7 +571,7 @@ export class IngestPipeline {
       throw this.createBadRequestError("No usable content found for extraction. Provide extractedText, a source URL, or supported image media.");
     }
 
-    const textResult = await this.withStageTimeout(
+    const textResult = await withLlmBudget(
       "geminiAi.extractFromText",
       this.geminiAi.extractFromText({
         text: ocrText,
@@ -532,6 +627,11 @@ export class IngestPipeline {
       })
     );
 
-    return { item: saved, extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore } };
+    const output: PipelineResult = {
+      item: saved,
+      extraction: { strategy: extractionStrategy, confidence: extractionConfidence, ocrQualityScore }
+    };
+    this.cacheResult(cacheKey, output);
+    return output;
   }
 }

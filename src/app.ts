@@ -12,8 +12,7 @@ import { FirestoreItemRepository } from "./repositories/firestore-item-repositor
 import { registerIngestRoute } from "./routes/ingest-route.js";
 import { FirebaseAuthService } from "./services/auth/firebase-auth-service.js";
 import { TextExtractor } from "./services/extraction/text-extractor.js";
-import { GeminiHttpClient } from "./services/gemini/gemini-http-client.js";
-import { OpenRouterClient } from "./services/gemini/openrouter-client.js";
+import { buildGeminiAi } from "./services/gemini/build-gemini-ai.js";
 import { CloudflareR2MediaStorage } from "./services/media/cloudflare-r2-media-storage.js";
 import { IngestPipeline } from "./services/pipeline/ingest-pipeline.js";
 import { HeuristicOcrClient } from "./services/ocr/heuristic-ocr-client.js";
@@ -29,8 +28,7 @@ export type AppDeps = {
 };
 
 function buildDeps(config: AppConfig, depsOverride?: Partial<AppDeps>): AppDeps {
-  const geminiAi =
-    depsOverride?.geminiAi ?? (config.LLM_PROVIDER === "openrouter" ? new OpenRouterClient(config) : new GeminiHttpClient(config));
+  const geminiAi = depsOverride?.geminiAi ?? buildGeminiAi(config);
   const itemRepository =
     depsOverride?.itemRepository ??
     (depsOverride?.pipeline
@@ -117,6 +115,10 @@ export async function buildApp(config: AppConfig, depsOverride?: Partial<AppDeps
 
     if (statusCode === 503) {
       reply.header("Retry-After", "5");
+    }
+
+    if (statusCode === 429) {
+      reply.header("Retry-After", "60");
     }
 
     if (config.NODE_ENV !== "production") {

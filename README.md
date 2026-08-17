@@ -58,6 +58,17 @@ cp .env.example .env
 - `DEFAULT_TIMEZONE`
 - `FIREBASE_SERVICE_ACCOUNT_JSON` (JSON stringified in one line)
 
+LLM provider and quota controls:
+
+- `LLM_PROVIDER` (`gemini` or `openrouter`)
+- `LLM_ENABLE_PROVIDER_FAILOVER` (default `true`): auto-fallback to the other provider on quota/credit errors when both keys are configured
+- `LLM_LOW_COST_MODE` (default `false`): skips OCR quality LLM call and avoids secondary extraction fallback
+- `LLM_DISABLE_ADVANCED_FALLBACK` (default `false`): disables advanced-model escalation
+- `LLM_MAX_INFERENCE_TEXT_LENGTH` (default `12000`): max text sent to model
+- `LLM_MAX_LLM_CALLS_PER_REQUEST` (default `4`): hard cap for model calls per request
+- `LLM_DEDUPE_TTL_SECONDS` (default `300`): in-memory dedupe cache TTL for repeated identical requests
+- `LLM_DAILY_REQUEST_BUDGET` (optional): hard cap of AI-backed requests per day per runtime instance
+
 Media upload variables (required when sending media):
 
 - `CLOUDFLARE_R2_ENDPOINT`
